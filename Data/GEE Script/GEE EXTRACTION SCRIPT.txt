@@ -1,0 +1,2290 @@
+/***************************************************************
+ KAINJI LAKE NATIONAL PARK (KLNP)
+ SAVANNAH WILDFIRE DRIVER + FIRE OCCURRENCE DATASET
+
+ ==============================================================
+ STUDY AREA
+ ==============================================================
+ projects/disaster-management-474719/assets/KLNP_BOUNDARY
+
+ ==============================================================
+ COMMON MODELLING PERIOD
+ ==============================================================
+ 2002–2020
+
+ 2001 = antecedent warm-up year
+
+ ==============================================================
+ SPATIAL ANALYTICAL UNIT
+ ==============================================================
+ 0.05° × 0.05° grid
+ approximately 5.5–5.6 km
+
+ Grid cells retained:
+ >=50% of grid cell within KLNP boundary
+
+ Current result:
+ 191 analytical cells
+
+ ==============================================================
+ FINAL PREDICTORS — 9
+ ==============================================================
+ 1. LST
+ 2. Rainfall
+ 3. VPD
+ 4. Soil Moisture
+ 5. Wind Speed
+ 6. EVI
+ 7. Land Cover
+ 8. Slope
+ 9. Global Human Modification (gHM)
+
+ ==============================================================
+ TARGET
+ ==============================================================
+ fire_occurrence
+
+ 1 = burned
+ 0 = unburned
+
+ Rows with insufficient valid fire observations are excluded.
+
+ ==============================================================
+ TEMPORAL LOGIC
+ ==============================================================
+ Fire target:
+     current month
+
+ LST:
+     previous month
+
+ Rainfall:
+     previous month
+
+ VPD:
+     previous month
+
+ Soil moisture:
+     previous month
+
+ Wind speed:
+     previous month
+
+ EVI:
+     previous month
+
+ Land cover:
+     previous year
+
+ gHM:
+     preceding human-modification epoch
+
+     2002–2004 → 2000
+     2005–2009 → 2005
+     2010–2014 → 2010
+     2015–2020 → 2015
+
+ ==============================================================
+ COMPUTATIONAL DESIGN
+ ==============================================================
+ Monthly extraction is performed in 4 time blocks:
+
+ Block 1: 2002–2006
+ Block 2: 2007–2011
+ Block 3: 2012–2016
+ Block 4: 2017–2020
+
+ This avoids excessive server-side graph/memory load.
+
+ ==============================================================
+ OUTPUT
+ ==============================================================
+ Four CSV files:
+
+ KLNP_Wildfire_2002_2006.csv
+ KLNP_Wildfire_2007_2011.csv
+ KLNP_Wildfire_2012_2016.csv
+ KLNP_Wildfire_2017_2020.csv
+
+ These will later be merged in Colab.
+****************************************************************/
+
+
+// ============================================================
+// 1. SETTINGS
+// ============================================================
+
+var START_YEAR = 2002;
+var END_YEAR   = 2020;
+
+var GRID_DEG = 0.05;
+
+var MIN_PARK_FRACTION = 0.50;
+
+var MIN_FIRE_VALID_FRACTION = 0.50;
+
+var UTM_CRS = 'EPSG:32631';
+
+
+// ============================================================
+// 2. STUDY AREA
+// ============================================================
+
+var KLNP_FC = ee.FeatureCollection(
+  'projects/disaster-management-474719/assets/KLNP_BOUNDARY'
+);
+
+var KLNP = KLNP_FC.geometry();
+
+
+print('========================================');
+print('KLNP STUDY AREA');
+print('========================================');
+
+print(
+  'KLNP asset:',
+  KLNP_FC
+);
+
+print(
+  'Boundary feature count:',
+  KLNP_FC.size()
+);
+
+print(
+  'KLNP area (km²):',
+  KLNP.area(10).divide(1e6)
+);
+
+
+Map.centerObject(
+  KLNP,
+  9
+);
+
+
+Map.addLayer(
+  KLNP_FC.style({
+    color: 'red',
+    fillColor: '00000000',
+    width: 2
+  }),
+  {},
+  'Official KLNP Boundary'
+);
+
+
+// ============================================================
+// 3. DATASETS
+// ============================================================
+
+
+// ------------------------------------------------------------
+// MODIS LST
+// ------------------------------------------------------------
+
+var MOD11A2 =
+  ee.ImageCollection(
+    'MODIS/061/MOD11A2'
+  );
+
+
+// ------------------------------------------------------------
+// MODIS EVI
+// ------------------------------------------------------------
+
+var MOD13Q1 =
+  ee.ImageCollection(
+    'MODIS/061/MOD13Q1'
+  );
+
+
+// ------------------------------------------------------------
+// MODIS 0.05° LAND COVER
+// ------------------------------------------------------------
+
+var MCD12C1 =
+  ee.ImageCollection(
+    'MODIS/061/MCD12C1'
+  );
+
+
+// ------------------------------------------------------------
+// MODIS BURNED AREA
+// ------------------------------------------------------------
+
+var MCD64A1 =
+  ee.ImageCollection(
+    'MODIS/061/MCD64A1'
+  );
+
+
+// ------------------------------------------------------------
+// CHIRPS
+// ------------------------------------------------------------
+
+var CHIRPS =
+  ee.ImageCollection(
+    'UCSB-CHG/CHIRPS/DAILY'
+  );
+
+
+// ------------------------------------------------------------
+// TERRACLIMATE
+// ------------------------------------------------------------
+
+var TERRACLIMATE =
+  ee.ImageCollection(
+    'IDAHO_EPSCOR/TERRACLIMATE'
+  );
+
+
+// ------------------------------------------------------------
+// SRTM
+// ------------------------------------------------------------
+
+var SRTM =
+  ee.Image(
+    'USGS/SRTMGL1_003'
+  );
+
+
+// ------------------------------------------------------------
+// TNC GLOBAL HUMAN MODIFICATION v3
+// ------------------------------------------------------------
+
+var GHM =
+  ee.ImageCollection(
+    'TNC/HM/v3/300m_c'
+  );
+
+
+// ============================================================
+// 4. DATASET AVAILABILITY
+// ============================================================
+
+print('========================================');
+print('DATASET AVAILABILITY');
+print('========================================');
+
+
+print(
+  'MCD64A1 images:',
+  MCD64A1.filterDate(
+    '2002-01-01',
+    '2021-01-01'
+  ).size()
+);
+
+
+print(
+  'MOD13Q1 images:',
+  MOD13Q1.filterDate(
+    '2001-01-01',
+    '2021-01-01'
+  ).size()
+);
+
+
+print(
+  'MCD12C1 images:',
+  MCD12C1.filterDate(
+    '2001-01-01',
+    '2021-01-01'
+  ).size()
+);
+
+
+print(
+  'TerraClimate images:',
+  TERRACLIMATE.filterDate(
+    '2001-01-01',
+    '2021-01-01'
+  ).size()
+);
+
+
+print(
+  'CHIRPS images:',
+  CHIRPS.filterDate(
+    '2001-01-01',
+    '2021-01-01'
+  ).size()
+);
+
+
+print(
+  'gHM images:',
+  GHM.size()
+);
+
+
+// ============================================================
+// 5. CREATE 0.05° GRID
+// ============================================================
+
+print('========================================');
+print('CREATING ANALYTICAL GRID');
+print('========================================');
+
+
+var bounds =
+  KLNP.bounds(
+    10,
+    'EPSG:4326'
+  );
+
+
+var boundsCoords =
+  ee.List(
+    bounds.coordinates().get(0)
+  );
+
+
+var xs =
+  boundsCoords.map(
+    function(pt) {
+
+      return ee.Number(
+        ee.List(pt).get(0)
+      );
+
+    }
+  );
+
+
+var ys =
+  boundsCoords.map(
+    function(pt) {
+
+      return ee.Number(
+        ee.List(pt).get(1)
+      );
+
+    }
+  );
+
+
+var xmin =
+  ee.Number(
+    xs.reduce(
+      ee.Reducer.min()
+    )
+  );
+
+
+var xmax =
+  ee.Number(
+    xs.reduce(
+      ee.Reducer.max()
+    )
+  );
+
+
+var ymin =
+  ee.Number(
+    ys.reduce(
+      ee.Reducer.min()
+    )
+  );
+
+
+var ymax =
+  ee.Number(
+    ys.reduce(
+      ee.Reducer.max()
+    )
+  );
+
+
+// ------------------------------------------------------------
+// Snap to 0.05° grid
+// ------------------------------------------------------------
+
+var lonMin =
+  xmin
+    .divide(GRID_DEG)
+    .floor()
+    .multiply(GRID_DEG);
+
+
+var lonMax =
+  xmax
+    .divide(GRID_DEG)
+    .ceil()
+    .multiply(GRID_DEG);
+
+
+var latMin =
+  ymin
+    .divide(GRID_DEG)
+    .floor()
+    .multiply(GRID_DEG);
+
+
+var latMax =
+  ymax
+    .divide(GRID_DEG)
+    .ceil()
+    .multiply(GRID_DEG);
+
+
+// ------------------------------------------------------------
+// Grid dimensions
+// ------------------------------------------------------------
+
+var nLon =
+  lonMax
+    .subtract(lonMin)
+    .divide(GRID_DEG)
+    .toInt();
+
+
+var nLat =
+  latMax
+    .subtract(latMin)
+    .divide(GRID_DEG)
+    .toInt();
+
+
+var lonIndices =
+  ee.List.sequence(
+    0,
+    nLon.subtract(1)
+  );
+
+
+var latIndices =
+  ee.List.sequence(
+    0,
+    nLat.subtract(1)
+  );
+
+
+// ------------------------------------------------------------
+// Generate grid
+// ------------------------------------------------------------
+
+var gridNested =
+  latIndices.map(
+    function(j) {
+
+      j =
+        ee.Number(j);
+
+
+      var lat =
+        latMin.add(
+          j.multiply(GRID_DEG)
+        );
+
+
+      return lonIndices.map(
+        function(i) {
+
+          i =
+            ee.Number(i);
+
+
+          var lon =
+            lonMin.add(
+              i.multiply(GRID_DEG)
+            );
+
+
+          var cell =
+            ee.Geometry.Rectangle(
+
+              [
+
+                lon,
+
+                lat,
+
+                lon.add(
+                  GRID_DEG
+                ),
+
+                lat.add(
+                  GRID_DEG
+                )
+
+              ],
+
+              'EPSG:4326',
+
+              false
+
+            );
+
+
+          var gridLon =
+            lon.add(
+              GRID_DEG / 2
+            );
+
+
+          var gridLat =
+            lat.add(
+              GRID_DEG / 2
+            );
+
+
+          var gridID =
+            ee.String(
+              'KLNP_'
+            )
+            .cat(
+              i.format('%03d')
+            )
+            .cat('_')
+            .cat(
+              j.format('%03d')
+            );
+
+
+          return ee.Feature(
+            cell,
+            {
+
+              grid_id:
+                gridID,
+
+              grid_longitude:
+                gridLon,
+
+              grid_latitude:
+                gridLat
+
+            }
+
+          );
+
+        }
+      );
+
+    }
+  );
+
+
+var grid =
+  ee.FeatureCollection(
+    gridNested.flatten()
+  );
+
+
+print(
+  'Initial grid cells:',
+  grid.size()
+);
+
+
+// ============================================================
+// 6. PARK COVERAGE
+// ============================================================
+
+var analysisGrid =
+  grid.map(
+    function(feature) {
+
+      var cell =
+        feature.geometry();
+
+
+      var cellArea =
+        cell.area(10);
+
+
+      var parkPart =
+        cell.intersection(
+          KLNP,
+          10
+        );
+
+
+      var parkArea =
+        parkPart.area(10);
+
+
+      var parkFraction =
+        parkArea.divide(
+          cellArea
+        );
+
+
+      return ee.Feature(
+        parkPart,
+        {
+
+          grid_id:
+            feature.get(
+              'grid_id'
+            ),
+
+          grid_longitude:
+            feature.get(
+              'grid_longitude'
+            ),
+
+          grid_latitude:
+            feature.get(
+              'grid_latitude'
+            ),
+
+          park_fraction:
+            parkFraction,
+
+          original_grid_area_km2:
+            cellArea.divide(
+              1e6
+            ),
+
+          park_area_km2:
+            parkArea.divide(
+              1e6
+            )
+
+        }
+      );
+
+    }
+  )
+  .filter(
+    ee.Filter.gte(
+      'park_fraction',
+      MIN_PARK_FRACTION
+    )
+  );
+
+
+print(
+  'Grid cells intersecting KLNP:',
+  grid.size()
+);
+
+
+print(
+  'FINAL ANALYTICAL GRID CELLS:',
+  analysisGrid.size()
+);
+
+
+print(
+  'Final grid sample:',
+  analysisGrid.limit(10)
+);
+
+
+Map.addLayer(
+  analysisGrid.style({
+    color: 'yellow',
+    fillColor: '00000000',
+    width: 1
+  }),
+  {},
+  'Final Analytical Grid'
+);
+
+
+// ============================================================
+// 7. GRID CENTROIDS
+// ============================================================
+//
+// These are constructed from the stored grid coordinates,
+// not from the clipped park geometry.
+//
+// This preserves the original analytical-grid location.
+// ============================================================
+
+var gridCentroids =
+  analysisGrid.map(
+    function(feature) {
+
+      var point =
+        ee.Geometry.Point([
+
+          feature.get(
+            'grid_longitude'
+          ),
+
+          feature.get(
+            'grid_latitude'
+          )
+
+        ]);
+
+
+      return ee.Feature(
+        point,
+        {
+
+          grid_id:
+            feature.get(
+              'grid_id'
+            ),
+
+          grid_longitude:
+            feature.get(
+              'grid_longitude'
+            ),
+
+          grid_latitude:
+            feature.get(
+              'grid_latitude'
+            )
+
+        }
+      );
+
+    }
+  );
+
+
+// ============================================================
+// 8. STATIC SLOPE
+// ============================================================
+
+var slopeImage =
+  ee.Terrain
+    .slope(
+      SRTM.select(
+        'elevation'
+      )
+    )
+    .rename(
+      'slope_deg'
+    )
+    .clip(
+      KLNP
+    );
+
+
+// ============================================================
+// 9. HUMAN MODIFICATION IMAGES
+// ============================================================
+//
+// Only the preceding epochs are used.
+//
+// 2002–2004 -> 2000
+// 2005–2009 -> 2005
+// 2010–2014 -> 2010
+// 2015–2020 -> 2015
+//
+// 2020 gHM is deliberately NOT used to explain 2020 fire.
+// ============================================================
+
+var HUMAN_EPOCHS =
+  ee.List([
+    2000,
+    2005,
+    2010,
+    2015
+  ]);
+
+
+var humanLayers =
+  ee.ImageCollection.fromImages(
+
+    HUMAN_EPOCHS.map(
+      function(epoch) {
+
+        epoch =
+          ee.Number(epoch);
+
+
+        var start =
+          ee.Date.fromYMD(
+            epoch,
+            1,
+            1
+          );
+
+
+        var end =
+          start.advance(
+            1,
+            'year'
+          );
+
+
+        var ghm =
+          GHM
+
+            .filterDate(
+              start,
+              end
+            )
+
+            .first()
+
+            .select(
+              'All_threats_combined'
+            )
+
+            .rename(
+              'gHM'
+            )
+
+            .clip(
+              KLNP
+            );
+
+
+        return ghm.set(
+          'human_epoch',
+          epoch
+        );
+
+      }
+    )
+
+  );
+
+
+print(
+  'Human-modification layers:',
+  humanLayers
+);
+
+
+// ============================================================
+// 10. MODIS LST QA FUNCTION
+// ============================================================
+
+function prepareLST(
+  image
+) {
+
+  var qa =
+    image.select(
+      'QC_Day'
+    );
+
+
+  var quality =
+    qa.bitwiseAnd(
+      3
+    );
+
+
+  var good =
+    quality.eq(
+      0
+    );
+
+
+  return image
+
+    .select(
+      'LST_Day_1km'
+    )
+
+    .updateMask(
+      good
+    )
+
+    .multiply(
+      0.02
+    )
+
+    .subtract(
+      273.15
+    )
+
+    .rename(
+      'LST_C'
+    );
+
+}
+
+
+// ============================================================
+// 11. MODIS EVI QA FUNCTION
+// ============================================================
+
+function prepareEVI(
+  image
+) {
+
+  var qa =
+    image.select(
+      'DetailedQA'
+    );
+
+
+  var quality =
+    qa.bitwiseAnd(
+      3
+    );
+
+
+  var good =
+    quality.lte(
+      1
+    );
+
+
+  return image
+
+    .select(
+      'EVI'
+    )
+
+    .updateMask(
+      good
+    )
+
+    .multiply(
+      0.0001
+    )
+
+    .rename(
+      'EVI'
+    );
+
+}
+
+
+// ============================================================
+// 12. HUMAN EPOCH FUNCTION
+// ============================================================
+
+function getHumanEpoch(
+  year
+) {
+
+  year =
+    ee.Number(
+      year
+    );
+
+
+  return ee.Algorithms.If(
+
+    year.lte(
+      2004
+    ),
+
+    2000,
+
+    ee.Algorithms.If(
+
+      year.lte(
+        2009
+      ),
+
+      2005,
+
+      ee.Algorithms.If(
+
+        year.lte(
+          2014
+        ),
+
+        2010,
+
+        2015
+
+      )
+
+    )
+
+  );
+
+}
+
+
+// ============================================================
+// 13. PRECOMPUTE PREVIOUS-YEAR LAND COVER TABLE
+// ============================================================
+//
+// 2002 fire year → 2001 land cover
+// ...
+// 2020 fire year → 2019 land cover
+//
+// MCD12C1 is already 0.05° / 5600 m.
+// ============================================================
+
+var landCoverByYear =
+  ee.FeatureCollection(
+
+    ee.List.sequence(
+      START_YEAR,
+      END_YEAR
+    ).map(
+      function(year) {
+
+        year =
+          ee.Number(year);
+
+
+        var lcYear =
+          year.subtract(
+            1
+          );
+
+
+        var start =
+          ee.Date.fromYMD(
+            lcYear,
+            1,
+            1
+          );
+
+
+        var end =
+          start.advance(
+            1,
+            'year'
+          );
+
+
+        var lcImage =
+          MCD12C1
+
+            .filterDate(
+              start,
+              end
+            )
+
+            .first()
+
+            .select(
+              'Majority_Land_Cover_Type_1'
+            )
+
+            .rename(
+              'land_cover'
+            );
+
+
+        var samples =
+          lcImage.sampleRegions({
+
+            collection:
+              gridCentroids,
+
+            properties: [
+              'grid_id'
+            ],
+
+            scale:
+              5600,
+
+            geometries:
+              false
+
+          });
+
+
+        return samples.map(
+          function(f) {
+
+            return f.set({
+
+              fire_year:
+                year,
+
+              land_cover_source_year:
+                lcYear
+
+            });
+
+          }
+        );
+
+      }
+    )
+
+  ).flatten();
+
+
+print(
+  'Land-cover table record count:',
+  landCoverByYear.size()
+);
+
+
+print(
+  'Land-cover table sample:',
+  landCoverByYear.limit(10)
+);
+
+
+// ============================================================
+// 14. FEATURE JOIN FUNCTION
+// ============================================================
+
+function joinByGridID(
+  primary,
+  secondary
+) {
+
+  var joined =
+    ee.Join.saveFirst(
+      'match'
+    ).apply(
+
+      primary,
+
+      secondary,
+
+      ee.Filter.equals({
+
+        leftField:
+          'grid_id',
+
+        rightField:
+          'grid_id'
+
+      })
+
+    );
+
+
+  return ee.FeatureCollection(
+    joined
+  ).map(
+    function(feature) {
+
+      var match =
+        ee.Feature(
+          feature.get(
+            'match'
+          )
+        );
+
+
+      return feature.set(
+        match.toDictionary()
+      );
+
+    }
+  );
+
+}
+
+
+// ============================================================
+// 15. MONTHLY EXTRACTION FUNCTION
+// ============================================================
+
+function extractMonth(
+  date
+) {
+
+  date =
+    ee.Date(
+      date
+    );
+
+
+  var year =
+    ee.Number(
+      date.get(
+        'year'
+      )
+    );
+
+
+  var month =
+    ee.Number(
+      date.get(
+        'month'
+      )
+    );
+
+
+  // ----------------------------------------------------------
+  // Previous month
+  // ----------------------------------------------------------
+
+  var previousDate =
+    date.advance(
+      -1,
+      'month'
+    );
+
+
+  var previousEnd =
+    previousDate.advance(
+      1,
+      'month'
+    );
+
+
+  // ==========================================================
+  // A. LST
+  // ==========================================================
+
+  var lst =
+    MOD11A2
+
+      .filterDate(
+        previousDate,
+        previousEnd
+      )
+
+      .map(
+        prepareLST
+      )
+
+      .mean()
+
+      .rename(
+        'LST_C'
+      )
+
+      .clip(
+        KLNP
+      );
+
+
+  // ==========================================================
+  // B. EVI
+  // ==========================================================
+
+  var evi =
+    MOD13Q1
+
+      .filterDate(
+        previousDate,
+        previousEnd
+      )
+
+      .map(
+        prepareEVI
+      )
+
+      .mean()
+
+      .rename(
+        'EVI'
+      )
+
+      .clip(
+        KLNP
+      );
+
+
+  // ==========================================================
+  // C. RAINFALL
+  // ==========================================================
+
+  var rainfall =
+    CHIRPS
+
+      .filterDate(
+        previousDate,
+        previousEnd
+      )
+
+      .select(
+        'precipitation'
+      )
+
+      .sum()
+
+      .rename(
+        'rainfall_mm'
+      )
+
+      .clip(
+        KLNP
+      );
+
+
+  // ==========================================================
+  // D. TERRACLIMATE
+  // ==========================================================
+
+  var tc =
+    TERRACLIMATE
+
+      .filterDate(
+        previousDate,
+        previousEnd
+      )
+
+      .first();
+
+
+  var vpd =
+    tc
+
+      .select(
+        'vpd'
+      )
+
+      .multiply(
+        0.01
+      )
+
+      .rename(
+        'VPD_kPa'
+      )
+
+      .clip(
+        KLNP
+      );
+
+
+  var soil =
+    tc
+
+      .select(
+        'soil'
+      )
+
+      .multiply(
+        0.1
+      )
+
+      .rename(
+        'soil_moisture_mm'
+      )
+
+      .clip(
+        KLNP
+      );
+
+
+  var wind =
+    tc
+
+      .select(
+        'vs'
+      )
+
+      .multiply(
+        0.01
+      )
+
+      .rename(
+        'wind_speed_ms'
+      )
+
+      .clip(
+        KLNP
+      );
+
+
+  // ==========================================================
+  // E. HUMAN MODIFICATION
+  // ==========================================================
+
+  var humanEpoch =
+    getHumanEpoch(
+      year
+    );
+
+
+  var ghm =
+    humanLayers
+
+      .filter(
+        ee.Filter.eq(
+          'human_epoch',
+          humanEpoch
+        )
+      )
+
+      .first()
+
+      .rename(
+        'gHM'
+      );
+
+
+  // ==========================================================
+  // F. SLOPE
+  // ==========================================================
+
+  var slope =
+    slopeImage;
+
+
+  // ==========================================================
+  // G. CONTINUOUS PREDICTOR STACK
+  // ==========================================================
+  //
+  // 8 continuous predictors:
+  //
+  // LST
+  // Rainfall
+  // VPD
+  // Soil moisture
+  // Wind
+  // EVI
+  // Slope
+  // gHM
+  //
+  // All are summarized to the analytical grid.
+  // ==========================================================
+
+  var continuousStack =
+    ee.Image.cat([
+
+      lst,
+
+      rainfall,
+
+      vpd,
+
+      soil,
+
+      wind,
+
+      evi,
+
+      slope,
+
+      ghm
+
+    ]);
+
+
+  var continuousStats =
+    continuousStack.reduceRegions({
+
+      collection:
+        analysisGrid,
+
+      reducer:
+        ee.Reducer.mean(),
+
+      scale:
+        5600,
+
+      crs:
+        'EPSG:4326',
+
+      tileScale:
+        4
+
+    });
+
+
+  // ==========================================================
+  // H. LAND COVER
+  // ==========================================================
+
+  var lcStats =
+    landCoverByYear
+
+      .filter(
+        ee.Filter.eq(
+          'fire_year',
+          year
+        )
+      );
+
+
+  // ==========================================================
+  // I. FIRE OCCURRENCE
+  // ==========================================================
+
+  var fireImage =
+    MCD64A1
+
+      .filterDate(
+
+        date,
+
+        date.advance(
+          1,
+          'month'
+        )
+
+      )
+
+      .mosaic();
+
+
+  // ----------------------------------------------------------
+  // Burn date
+  // ----------------------------------------------------------
+
+  var burnDate =
+    fireImage.select(
+      'BurnDate'
+    );
+
+
+  // ----------------------------------------------------------
+  // QA
+  // ----------------------------------------------------------
+
+  var fireQA =
+    fireImage.select(
+      'QA'
+    );
+
+
+  // ----------------------------------------------------------
+  // Valid land + sufficient data
+  //
+  // Bit 0 = land
+  // Bit 1 = sufficient valid data
+  // ----------------------------------------------------------
+
+  var valid =
+    fireQA
+
+      .bitwiseAnd(
+        3
+      )
+
+      .eq(
+        3
+      )
+
+      .unmask(
+        0
+      )
+
+      .toFloat();
+
+
+  // ----------------------------------------------------------
+  // Burned
+  // ----------------------------------------------------------
+
+  var burned =
+    burnDate
+
+      .gte(
+        1
+      )
+
+      .and(
+
+        burnDate.lte(
+          366
+        )
+
+      )
+
+      .unmask(
+        0
+      )
+
+      .toFloat();
+
+
+  // ----------------------------------------------------------
+  // Burned valid
+  // ----------------------------------------------------------
+
+  var burnedValid =
+    burned
+
+      .and(
+        valid
+      )
+
+      .toFloat()
+      .rename(
+        'burned_valid'
+      );
+
+
+  // ----------------------------------------------------------
+  // Full mapping
+  // ----------------------------------------------------------
+
+  var fullMapping =
+    valid
+
+      .and(
+
+        fireQA
+
+          .bitwiseAnd(
+            4
+          )
+
+          .eq(
+            0
+          )
+
+      )
+
+      .unmask(
+        0
+      )
+
+      .toFloat()
+      .rename(
+        'full_mapping'
+      );
+
+
+  // ----------------------------------------------------------
+  // Valid pixel count
+  // ----------------------------------------------------------
+
+  var validPixels =
+    valid
+      .rename(
+        'valid_pixels'
+      );
+
+
+  // ----------------------------------------------------------
+  // Full pixel count
+  // ----------------------------------------------------------
+
+  var totalPixels =
+    ee.Image.constant(
+      1
+    )
+
+    .rename(
+      'total_pixels'
+    )
+
+    .toFloat();
+
+
+  // ----------------------------------------------------------
+  // Fire stack
+  // ----------------------------------------------------------
+
+  var fireStack =
+    ee.Image.cat([
+
+      burnedValid,
+
+      validPixels,
+
+      fullMapping,
+
+      totalPixels
+
+    ]);
+
+
+  // ----------------------------------------------------------
+  // Fire reduction
+  // ----------------------------------------------------------
+
+  var fireStats =
+    fireStack.reduceRegions({
+
+      collection:
+        analysisGrid,
+
+      reducer:
+        ee.Reducer.sum(),
+
+      scale:
+        500,
+
+      crs:
+        'EPSG:4326',
+
+      tileScale:
+        4
+
+    });
+
+
+  // ----------------------------------------------------------
+  // Derive fire target
+  // ----------------------------------------------------------
+
+  fireStats =
+    fireStats.map(
+      function(f) {
+
+        var burnedCount =
+          ee.Number(
+            f.get(
+              'burned_valid'
+            )
+          );
+
+
+        var validCount =
+          ee.Number(
+            f.get(
+              'valid_pixels'
+            )
+          );
+
+
+        var totalCount =
+          ee.Number(
+            f.get(
+              'total_pixels'
+            )
+          );
+
+
+        var validFraction =
+          validCount.divide(
+            totalCount
+          );
+
+
+        var fireFraction =
+          ee.Algorithms.If(
+
+            validCount.gt(
+              0
+            ),
+
+            burnedCount.divide(
+              validCount
+            ),
+
+            null
+
+          );
+
+
+        var fireOccurrence =
+          ee.Algorithms.If(
+
+            validFraction.gte(
+              MIN_FIRE_VALID_FRACTION
+            ),
+
+            burnedCount.gt(
+              0
+            ).int(),
+
+            null
+
+          );
+
+
+        return f.set({
+
+          fire_fraction:
+            fireFraction,
+
+          fire_valid_fraction:
+            validFraction,
+
+          fire_occurrence:
+            fireOccurrence
+
+        });
+
+      }
+
+    );
+
+
+  // ==========================================================
+  // J. JOIN LAND COVER
+  // ==========================================================
+
+  var combined =
+    joinByGridID(
+
+      continuousStats,
+
+      lcStats
+
+    );
+
+
+  // ==========================================================
+  // K. JOIN FIRE
+  // ==========================================================
+
+  combined =
+    joinByGridID(
+
+      combined,
+
+      fireStats
+
+    );
+
+
+  // ==========================================================
+  // L. FINAL TEMPORAL ATTRIBUTES
+  // ==========================================================
+
+  combined =
+    combined.map(
+      function(f) {
+
+        return f.set({
+
+          year:
+            year,
+
+          month:
+            month,
+
+          predictor_lag_months:
+            1,
+
+          land_cover_source_year:
+            year.subtract(
+              1
+            ),
+
+          human_modification_epoch:
+            humanEpoch
+
+        });
+
+      }
+    );
+
+
+  return combined;
+
+}
+
+
+// ============================================================
+// 16. FINAL COLUMN STRUCTURE
+// ============================================================
+
+var FINAL_COLUMNS = [
+
+  // ----------------------------------------------------------
+  // GRID LOCATION
+  // ----------------------------------------------------------
+
+  'grid_id',
+
+  'grid_longitude',
+
+  'grid_latitude',
+
+
+  // ----------------------------------------------------------
+  // SPATIAL AUDIT
+  // ----------------------------------------------------------
+
+  'park_fraction',
+
+  'original_grid_area_km2',
+
+  'park_area_km2',
+
+
+  // ----------------------------------------------------------
+  // TIME
+  // ----------------------------------------------------------
+
+  'year',
+
+  'month',
+
+
+  // ----------------------------------------------------------
+  // 9 PREDICTORS
+  // ----------------------------------------------------------
+
+  'LST_C',
+
+  'rainfall_mm',
+
+  'VPD_kPa',
+
+  'soil_moisture_mm',
+
+  'wind_speed_ms',
+
+  'EVI',
+
+  'land_cover',
+
+  'slope_deg',
+
+  'gHM',
+
+
+  // ----------------------------------------------------------
+  // TARGET
+  // ----------------------------------------------------------
+
+  'fire_occurrence',
+
+
+  // ----------------------------------------------------------
+  // FIRE QUALITY
+  // ----------------------------------------------------------
+
+  'fire_fraction',
+
+  'fire_valid_fraction',
+
+  'full_mapping',
+
+
+  // ----------------------------------------------------------
+  // TEMPORAL AUDIT
+  // ----------------------------------------------------------
+
+  'predictor_lag_months',
+
+  'land_cover_source_year',
+
+  'human_modification_epoch'
+
+];
+
+
+// ============================================================
+// 17. CREATE DATE-BLOCK FUNCTION
+// ============================================================
+
+function makeDateList(
+  startYear,
+  endYear
+) {
+
+  var start =
+    ee.Date.fromYMD(
+      startYear,
+      1,
+      1
+    );
+
+
+  var end =
+    ee.Date.fromYMD(
+      endYear + 1,
+      1,
+      1
+    );
+
+
+  var months =
+    end.difference(
+      start,
+      'month'
+    );
+
+
+  return ee.List.sequence(
+    0,
+    months.subtract(1)
+  ).map(
+    function(i) {
+
+      return start.advance(
+        ee.Number(i),
+        'month'
+      );
+
+    }
+  );
+
+}
+
+
+// ============================================================
+// 18. BLOCK 1 — 2002–2006
+// ============================================================
+
+var dates_2002_2006 =
+  makeDateList(
+    2002,
+    2006
+  );
+
+
+var block_2002_2006 =
+  ee.FeatureCollection(
+
+    dates_2002_2006.map(
+      extractMonth
+    )
+
+  ).flatten();
+
+
+block_2002_2006 =
+  block_2002_2006
+
+    .select(
+      FINAL_COLUMNS
+    )
+
+    // Only the target must be valid at export.
+    // Predictor missingness will be assessed later
+    // in Colab rather than silently deleted here.
+    .filter(
+      ee.Filter.notNull([
+        'fire_occurrence'
+      ])
+    );
+
+
+print(
+  'BLOCK 1 expected months:',
+  60
+);
+
+print(
+  'BLOCK 1 sample:',
+  block_2002_2006.limit(5)
+);
+
+
+// ============================================================
+// 19. BLOCK 2 — 2007–2011
+// ============================================================
+
+var dates_2007_2011 =
+  makeDateList(
+    2007,
+    2011
+  );
+
+
+var block_2007_2011 =
+  ee.FeatureCollection(
+
+    dates_2007_2011.map(
+      extractMonth
+    )
+
+  ).flatten();
+
+
+block_2007_2011 =
+  block_2007_2011
+
+    .select(
+      FINAL_COLUMNS
+    )
+
+    .filter(
+      ee.Filter.notNull([
+        'fire_occurrence'
+      ])
+    );
+
+
+// ============================================================
+// 20. BLOCK 3 — 2012–2016
+// ============================================================
+
+var dates_2012_2016 =
+  makeDateList(
+    2012,
+    2016
+  );
+
+
+var block_2012_2016 =
+  ee.FeatureCollection(
+
+    dates_2012_2016.map(
+      extractMonth
+    )
+
+  ).flatten();
+
+
+block_2012_2016 =
+  block_2012_2016
+
+    .select(
+      FINAL_COLUMNS
+    )
+
+    .filter(
+      ee.Filter.notNull([
+        'fire_occurrence'
+      ])
+    );
+
+
+// ============================================================
+// 21. BLOCK 4 — 2017–2020
+// ============================================================
+
+var dates_2017_2020 =
+  makeDateList(
+    2017,
+    2020
+  );
+
+
+var block_2017_2020 =
+  ee.FeatureCollection(
+
+    dates_2017_2020.map(
+      extractMonth
+    )
+
+  ).flatten();
+
+
+block_2017_2020 =
+  block_2017_2020
+
+    .select(
+      FINAL_COLUMNS
+    )
+
+    .filter(
+      ee.Filter.notNull([
+        'fire_occurrence'
+      ])
+    );
+
+
+// ============================================================
+// 22. EXPORT BLOCK 1
+// ============================================================
+
+Export.table.toDrive({
+
+  collection:
+    block_2002_2006,
+
+  description:
+    'KLNP_Wildfire_2002_2006',
+
+  fileNamePrefix:
+    'KLNP_Wildfire_2002_2006',
+
+  folder:
+    'KLNP_Wildfire_GEE_Exports',
+
+  fileFormat:
+    'CSV',
+
+  selectors:
+    FINAL_COLUMNS
+
+});
+
+
+// ============================================================
+// 23. EXPORT BLOCK 2
+// ============================================================
+
+Export.table.toDrive({
+
+  collection:
+    block_2007_2011,
+
+  description:
+    'KLNP_Wildfire_2007_2011',
+
+  fileNamePrefix:
+    'KLNP_Wildfire_2007_2011',
+
+  folder:
+    'KLNP_Wildfire_GEE_Exports',
+
+  fileFormat:
+    'CSV',
+
+  selectors:
+    FINAL_COLUMNS
+
+});
+
+
+// ============================================================
+// 24. EXPORT BLOCK 3
+// ============================================================
+
+Export.table.toDrive({
+
+  collection:
+    block_2012_2016,
+
+  description:
+    'KLNP_Wildfire_2012_2016',
+
+  fileNamePrefix:
+    'KLNP_Wildfire_2012_2016',
+
+  folder:
+    'KLNP_Wildfire_GEE_Exports',
+
+  fileFormat:
+    'CSV',
+
+  selectors:
+    FINAL_COLUMNS
+
+});
+
+
+// ============================================================
+// 25. EXPORT BLOCK 4
+// ============================================================
+
+Export.table.toDrive({
+
+  collection:
+    block_2017_2020,
+
+  description:
+    'KLNP_Wildfire_2017_2020',
+
+  fileNamePrefix:
+    'KLNP_Wildfire_2017_2020',
+
+  folder:
+    'KLNP_Wildfire_GEE_Exports',
+
+  fileFormat:
+    'CSV',
+
+  selectors:
+    FINAL_COLUMNS
+
+});
+
+
+// ============================================================
+// 26. FINAL INFORMATION
+// ============================================================
+
+print('========================================');
+print('PRODUCTION EXPORTS CREATED');
+print('========================================');
+
+print(
+  'Block 1: 2002–2006 = 60 months'
+);
+
+print(
+  'Block 2: 2007–2011 = 60 months'
+);
+
+print(
+  'Block 3: 2012–2016 = 60 months'
+);
+
+print(
+  'Block 4: 2017–2020 = 48 months'
+);
+
+print(
+  'Total modelling months = 228'
+);
+
+print(
+  'Analytical grid cells =',
+  analysisGrid.size()
+);
+
+print(
+  'Maximum theoretical records =',
+  analysisGrid.size().multiply(228)
+);
+
+
+/***************************************************************
+ END OF SCRIPT
+***************************************************************/
